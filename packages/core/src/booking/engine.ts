@@ -115,13 +115,18 @@ export const planBooking = (
   // temporal sanity
   const leadMs = range.start.getTime() - now.getTime();
   if (leadMs < policy.minLeadMinutes * 60_000)
-    throw errors.validation(`Bookings must be at least ${policy.minLeadMinutes} minutes in advance`);
+    throw errors.validation(
+      `Bookings must be at least ${policy.minLeadMinutes} minutes in advance`,
+    );
   const horizonMs = policy.maxAdvanceDays * 24 * 60 * 60 * 1000;
   if (leadMs > horizonMs)
     throw errors.validation(`Bookings cannot be more than ${policy.maxAdvanceDays} days ahead`);
 
   // exceptions (closures / maintenance / owner block)
-  assertNoExceptionOverlap(range, ctx.exceptions);
+  assertNoExceptionOverlap(
+    range,
+    ctx.exceptions.map((e) => ({ start: e.startAt, end: e.endAt, kind: e.kind })),
+  );
 
   // conflict with live bookings
   const conflict = ctx.existing.find(
