@@ -1,0 +1,12 @@
+* @pcn/eng-leads
+
+packages/core/         @pcn/booking-engine
+packages/db/           @pcn/booking-engine
+packages/adapters/     @pcn/integrations
+apps/api/              @pcn/backend
+apps/web/              @pcn/frontend
+apps/admin/            @pcn/frontend
+apps/mobile/           @pcn/mobile
+apps/worker/           @pcn/backend
+infra/                 @pcn/sre
+docs/adr/              @pcn/eng-leads

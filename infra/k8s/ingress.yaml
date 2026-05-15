@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pcn
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: "5m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [pcn.vn, www.pcn.vn, api.pcn.vn, admin.pcn.vn]
+      secretName: pcn-tls
+  rules:
+    - host: pcn.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: pcn-web, port: { number: 80 } } }
+    - host: api.pcn.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: pcn-api, port: { number: 80 } } }
+    - host: admin.pcn.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: pcn-admin, port: { number: 80 } } }

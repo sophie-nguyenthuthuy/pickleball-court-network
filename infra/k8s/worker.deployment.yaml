@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pcn-worker }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: pcn-worker }
+  template:
+    metadata:
+      labels: { app: pcn-worker }
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/pcn/pickleball-court-network/worker:latest
+          envFrom:
+            - secretRef: { name: pcn-api-secrets }
+            - configMapRef: { name: pcn-config }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 1, memory: 1Gi }

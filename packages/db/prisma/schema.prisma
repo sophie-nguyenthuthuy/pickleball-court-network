@@ -1,0 +1,854 @@
+// PCN — primary datastore schema.
+//
+// Conventions:
+//   * All ids are uuid v7-ish (generated app-side via @pcn/core/id).
+//   * All monetary values are stored as BIGINT VND (no decimals).
+//   * All timestamps are timestamptz; UTC at rest, rendered in Asia/Ho_Chi_Minh.
+//   * Overlap prevention for bookings uses a Postgres EXCLUDE constraint
+//     created via SQL migration (see prisma/migrations/0001_*); Prisma does
+//     not model exclusion constraints natively.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, pgcrypto, pg_trgm, btree_gist, uuid_ossp(map: "uuid-ossp")]
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Identity
+// ──────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  PLAYER
+  COURT_OWNER
+  STAFF
+  ADMIN
+}
+
+enum Sport {
+  PICKLEBALL
+  PADEL
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+model User {
+  id                String   @id @default(uuid()) @db.Uuid
+  phone             String   @unique
+  phoneVerifiedAt   DateTime?
+  email             String?  @unique
+  emailVerifiedAt   DateTime?
+  passwordHash      String?
+  displayName       String
+  slug              String   @unique
+  avatarUrl         String?
+  city              String?
+  district          String?
+  dateOfBirth       DateTime? @db.Date
+  gender            Gender    @default(UNSPECIFIED)
+  preferredSport    Sport?
+  zaloUserId        String?   @unique
+  pushTokens        String[]
+  roles             UserRole[] @default([PLAYER])
+  isSuspended       Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  ownedVenues       Venue[]
+  organizedBookings Booking[]              @relation("OrganizerBookings")
+  participations    BookingParticipant[]
+  ratings           PlayerRating[]
+  ladderEntries     LadderEntry[]
+  reviewsWritten    Review[]
+  refreshTokens     RefreshToken[]
+  otpRequests       OtpRequest[]
+  notifications     Notification[]
+  notificationPref  NotificationPreference?
+  zaloConversation  ZaloOaConversation?
+
+  @@index([city, district])
+  @@index([createdAt])
+}
+
+model RefreshToken {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  deviceLabel   String?
+  fingerprint   String?
+  ipAddress     String?
+  userAgent     String?
+  issuedAt      DateTime @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  replacedById  String?  @db.Uuid
+
+  @@index([userId, revokedAt])
+}
+
+enum OtpChannel {
+  SMS
+  ZALO_ZNS
+}
+
+model OtpRequest {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String?    @db.Uuid
+  user        User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  phone       String
+  channel     OtpChannel
+  codeHash    String
+  attempts    Int        @default(0)
+  consumedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime   @default(now())
+
+  @@index([phone, createdAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Venues & courts
+// ──────────────────────────────────────────────────────────────────────────
+
+enum VenueStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum CourtSurface {
+  CONCRETE
+  ASPHALT
+  ACRYLIC
+  SYNTHETIC_TURF
+  WOOD
+  RUBBER
+}
+
+enum CourtKind {
+  INDOOR
+  OUTDOOR
+  COVERED
+}
+
+model Venue {
+  id              String       @id @default(uuid()) @db.Uuid
+  ownerId         String       @db.Uuid
+  owner           User         @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  name            String
+  slug            String       @unique
+  sports          Sport[]
+  status          VenueStatus  @default(DRAFT)
+  description     String?
+  addressLine     String
+  ward            String?
+  district        String
+  city            String
+  country         String       @default("VN")
+  latitude        Float
+  longitude       Float
+  geog            Unsupported("geography(Point, 4326)")?
+  phone           String?
+  zaloContact     String?
+  zaloOaId        String?
+  amenities       Json         @default("{}")
+  rulesMarkdown   String?
+  images          String[]
+  payoutAccountId String?      @db.Uuid
+  reviewAvg       Float?
+  reviewCount     Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  courts          Court[]
+  tournaments     Tournament[]
+  reviews         Review[]
+  payoutBatches   PayoutBatch[]
+  payoutAccount   PayoutAccount? @relation(fields: [payoutAccountId], references: [id])
+
+  @@index([city, district, status])
+  @@index([sports])
+}
+
+model Court {
+  id            String        @id @default(uuid()) @db.Uuid
+  venueId       String        @db.Uuid
+  venue         Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  name          String
+  sport         Sport
+  surface       CourtSurface
+  kind          CourtKind
+  hasLighting   Boolean       @default(true)
+  notes         String?
+  isActive      Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  scheduleRules    CourtScheduleRule[]
+  scheduleExceptions CourtScheduleException[]
+  bookings         Booking[]
+  bracketMatches   BracketMatch[]
+
+  @@unique([venueId, name])
+  @@index([venueId, isActive])
+}
+
+model CourtScheduleRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  courtId     String   @db.Uuid
+  court       Court    @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int      // 0 = Sunday … 6 = Saturday
+  startMinute Int      // minutes from midnight
+  endMinute   Int
+  basePriceVnd BigInt
+  peakPriceVnd BigInt?
+  peakWindows  Json?   // [{startMinute, endMinute}, ...]
+  isBookable   Boolean @default(true)
+
+  @@unique([courtId, dayOfWeek, startMinute])
+  @@index([courtId, dayOfWeek])
+}
+
+enum CourtExceptionKind {
+  CLOSED
+  MAINTENANCE
+  SPECIAL_PRICE
+  OWNER_BLOCK
+}
+
+model CourtScheduleException {
+  id          String              @id @default(uuid()) @db.Uuid
+  courtId     String              @db.Uuid
+  court       Court               @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  kind        CourtExceptionKind
+  priceVnd    BigInt?
+  reason      String?
+  createdAt   DateTime            @default(now())
+
+  @@index([courtId, startAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Booking
+// ──────────────────────────────────────────────────────────────────────────
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  EXPIRED
+}
+
+enum BookingSource {
+  WEB
+  MOBILE
+  ZALO_OA
+  OWNER_DIRECT
+  ADMIN
+  API
+}
+
+model Booking {
+  id              String         @id @default(uuid()) @db.Uuid
+  code            String         @unique // human-friendly e.g. "PCN-2026-AB12CD"
+  courtId         String         @db.Uuid
+  court           Court          @relation(fields: [courtId], references: [id], onDelete: Restrict)
+  organizerId     String         @db.Uuid
+  organizer       User           @relation("OrganizerBookings", fields: [organizerId], references: [id], onDelete: Restrict)
+  startAt         DateTime
+  endAt           DateTime
+  priceVnd        BigInt
+  platformFeeVnd  BigInt         @default(0)
+  status          BookingStatus  @default(PENDING_PAYMENT)
+  source          BookingSource
+  notes           String?
+  idempotencyKey  String?        @unique
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+  cancellationReason String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  participants    BookingParticipant[]
+  payments        Payment[]
+  timeline        BookingTimeline[]
+  review          Review?
+  matches         Match[]
+  payoutItems     PayoutItem[]
+
+  @@index([courtId, startAt])
+  @@index([organizerId, startAt])
+  @@index([status, startAt])
+}
+
+model BookingHold {
+  id          String   @id @default(uuid()) @db.Uuid
+  courtId     String   @db.Uuid
+  holderId    String   @db.Uuid
+  startAt     DateTime
+  endAt       DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([courtId, startAt])
+  @@index([expiresAt])
+}
+
+model BookingParticipant {
+  id          String   @id @default(uuid()) @db.Uuid
+  bookingId   String   @db.Uuid
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId      String?  @db.Uuid
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name        String
+  phoneHash   String?
+  phoneLast4  String?
+  isOrganizer Boolean  @default(false)
+  paidAmountVnd BigInt @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([userId])
+}
+
+model BookingTimeline {
+  id          String   @id @default(uuid()) @db.Uuid
+  bookingId   String   @db.Uuid
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  event       String
+  actorId     String?  @db.Uuid
+  payload     Json?
+  at          DateTime @default(now())
+
+  @@index([bookingId, at])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Payments
+// ──────────────────────────────────────────────────────────────────────────
+
+enum PaymentGateway {
+  VNPAY
+  MOMO
+  ZALOPAY
+  CASH
+  VIETQR
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  CANCELLED
+}
+
+model Payment {
+  id                  String          @id @default(uuid()) @db.Uuid
+  bookingId           String          @db.Uuid
+  booking             Booking         @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  gateway             PaymentGateway
+  gatewayTxnId        String?
+  amountVnd           BigInt
+  feeVnd              BigInt          @default(0)
+  status              PaymentStatus   @default(PENDING)
+  idempotencyKey      String          @unique
+  rawCallback         Json?
+  signatureVerifiedAt DateTime?
+  capturedAt          DateTime?
+  failedAt            DateTime?
+  failureCode         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  refunds             Refund[]
+
+  @@index([bookingId])
+  @@index([gateway, gatewayTxnId])
+  @@index([status, createdAt])
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Refund {
+  id              String       @id @default(uuid()) @db.Uuid
+  paymentId       String       @db.Uuid
+  payment         Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  amountVnd       BigInt
+  reason          String
+  status          RefundStatus @default(PENDING)
+  gatewayRefundId String?
+  createdAt       DateTime     @default(now())
+  succeededAt     DateTime?
+  failedAt        DateTime?
+
+  @@index([paymentId])
+}
+
+model PayoutAccount {
+  id            String   @id @default(uuid()) @db.Uuid
+  bankCode      String   // VN bank code (BIDV, TCB, etc.)
+  accountNumber String
+  accountName   String
+  vietqrEnabled Boolean  @default(true)
+  isPrimary     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  venues        Venue[]
+}
+
+enum PayoutStatus {
+  DRAFT
+  SCHEDULED
+  PAID
+  FAILED
+}
+
+model PayoutBatch {
+  id            String       @id @default(uuid()) @db.Uuid
+  venueId       String       @db.Uuid
+  venue         Venue        @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  periodStart   DateTime
+  periodEnd     DateTime
+  grossVnd      BigInt
+  platformFeeVnd BigInt
+  netVnd        BigInt
+  status        PayoutStatus @default(DRAFT)
+  scheduledFor  DateTime?
+  paidAt        DateTime?
+  reference     String?
+  createdAt     DateTime     @default(now())
+
+  items         PayoutItem[]
+
+  @@index([venueId, periodStart])
+}
+
+model PayoutItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  batchId     String   @db.Uuid
+  batch       PayoutBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  bookingId   String   @db.Uuid
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  amountVnd   BigInt
+
+  @@unique([batchId, bookingId])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ratings / Ladder / Matches
+// ──────────────────────────────────────────────────────────────────────────
+
+enum MatchFormat {
+  SINGLES
+  DOUBLES
+  MIXED_DOUBLES
+}
+
+enum MatchStatus {
+  PENDING_CONFIRM
+  CONFIRMED
+  DISPUTED
+  CANCELLED
+}
+
+model PlayerRating {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sport         Sport
+  format        MatchFormat
+  rating        Float    @default(1500)
+  deviation     Float    @default(350)
+  volatility    Float    @default(0.06)
+  matchesPlayed Int      @default(0)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  lastMatchAt   DateTime?
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, sport, format])
+}
+
+model Match {
+  id            String       @id @default(uuid()) @db.Uuid
+  bookingId     String?      @db.Uuid
+  booking       Booking?     @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  ladderId      String?      @db.Uuid
+  ladder        Ladder?      @relation(fields: [ladderId], references: [id], onDelete: SetNull)
+  tournamentId  String?      @db.Uuid
+  tournament    Tournament?  @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  sport         Sport
+  format        MatchFormat
+  playedAt      DateTime
+  sideAUserIds  String[]     @db.Uuid
+  sideBUserIds  String[]     @db.Uuid
+  sideAScore    Int
+  sideBScore    Int
+  winnerSide    String?      // "A" | "B"
+  recordedById  String       @db.Uuid
+  status        MatchStatus  @default(PENDING_CONFIRM)
+  confirmations Int          @default(0)
+  ratingDeltaA  Float?
+  ratingDeltaB  Float?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([ladderId, playedAt])
+  @@index([tournamentId, playedAt])
+  @@index([sport, playedAt])
+}
+
+enum LadderStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+model Ladder {
+  id              String       @id @default(uuid()) @db.Uuid
+  slug            String       @unique
+  name            String
+  city            String
+  district        String?
+  sport           Sport
+  format          MatchFormat
+  status          LadderStatus @default(DRAFT)
+  startsOn        DateTime     @db.Date
+  endsOn          DateTime     @db.Date
+  skillMin        Float?
+  skillMax        Float?
+  description     String?
+  createdAt       DateTime     @default(now())
+
+  entries         LadderEntry[]
+  matches         Match[]
+
+  @@index([city, sport, status])
+}
+
+model LadderEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  ladderId      String   @db.Uuid
+  ladder        Ladder   @relation(fields: [ladderId], references: [id], onDelete: Cascade)
+  userId        String   @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  points        Int      @default(0)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  currentStreak Int      @default(0)
+  joinedAt      DateTime @default(now())
+
+  @@unique([ladderId, userId])
+  @@index([ladderId, points])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tournaments
+// ──────────────────────────────────────────────────────────────────────────
+
+enum TournamentStatus {
+  DRAFT
+  ANNOUNCED
+  REGISTRATION_OPEN
+  REGISTRATION_CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BracketType {
+  SINGLE_ELIM
+  DOUBLE_ELIM
+  ROUND_ROBIN
+  GROUP_PLUS_KNOCKOUT
+}
+
+model Tournament {
+  id                  String           @id @default(uuid()) @db.Uuid
+  slug                String           @unique
+  name                String
+  sport               Sport
+  bracketType         BracketType
+  venueId             String?          @db.Uuid
+  venue               Venue?           @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  startsOn            DateTime         @db.Date
+  endsOn              DateTime         @db.Date
+  registrationOpenAt  DateTime
+  registrationCloseAt DateTime
+  entryFeeVnd         BigInt           @default(0)
+  prizePoolVnd        BigInt           @default(0)
+  maxEntries          Int?
+  rulesMarkdown       String?
+  bannerUrl           String?
+  status              TournamentStatus @default(DRAFT)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  divisions           TournamentDivision[]
+  registrations       TournamentRegistration[]
+  matches             Match[]
+  bracketMatches      BracketMatch[]
+
+  @@index([sport, status, startsOn])
+}
+
+model TournamentDivision {
+  id            String  @id @default(uuid()) @db.Uuid
+  tournamentId  String  @db.Uuid
+  tournament    Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  name          String
+  format        MatchFormat
+  skillMin      Float?
+  skillMax      Float?
+  maxEntries    Int?
+
+  registrations TournamentRegistration[]
+  bracketMatches BracketMatch[]
+
+  @@unique([tournamentId, name])
+}
+
+enum RegistrationStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  WAITLIST
+  CANCELLED
+}
+
+model TournamentRegistration {
+  id              String              @id @default(uuid()) @db.Uuid
+  tournamentId    String              @db.Uuid
+  tournament      Tournament          @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  divisionId      String              @db.Uuid
+  division        TournamentDivision  @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  captainId       String              @db.Uuid
+  partnerId       String?             @db.Uuid
+  teamName        String?
+  status          RegistrationStatus  @default(PENDING_PAYMENT)
+  seed            Int?
+  registeredAt    DateTime            @default(now())
+
+  bracketMatchesAsA BracketMatch[] @relation("BracketSideA")
+  bracketMatchesAsB BracketMatch[] @relation("BracketSideB")
+
+  @@unique([tournamentId, captainId, partnerId])
+  @@index([tournamentId, status])
+}
+
+enum BracketMatchStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  WALKOVER
+  CANCELLED
+}
+
+model BracketMatch {
+  id              String              @id @default(uuid()) @db.Uuid
+  tournamentId    String              @db.Uuid
+  tournament      Tournament          @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  divisionId      String              @db.Uuid
+  division        TournamentDivision  @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  round           Int
+  matchNumber     Int
+  bestOf          Int                 @default(3)
+  sideARegId      String?             @db.Uuid
+  sideAReg        TournamentRegistration? @relation("BracketSideA", fields: [sideARegId], references: [id])
+  sideBRegId      String?             @db.Uuid
+  sideBReg        TournamentRegistration? @relation("BracketSideB", fields: [sideBRegId], references: [id])
+  scheduledAt     DateTime?
+  courtId         String?             @db.Uuid
+  court           Court?              @relation(fields: [courtId], references: [id])
+  setScores       Json?               // [{a:11,b:9}, ...]
+  winnerRegId     String?             @db.Uuid
+  status          BracketMatchStatus  @default(SCHEDULED)
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([tournamentId, divisionId, round, matchNumber])
+  @@index([tournamentId, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Reviews
+// ──────────────────────────────────────────────────────────────────────────
+
+enum ReviewStatus {
+  PUBLISHED
+  HIDDEN
+  REPORTED
+}
+
+model Review {
+  id          String       @id @default(uuid()) @db.Uuid
+  bookingId   String       @unique @db.Uuid
+  booking     Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  venueId     String       @db.Uuid
+  venue       Venue        @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  authorId    String       @db.Uuid
+  author      User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  rating      Int          // 1-5
+  comment     String?
+  photos      String[]
+  status      ReviewStatus @default(PUBLISHED)
+  ownerReply  String?
+  ownerReplyAt DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([venueId, status, createdAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Notifications
+// ──────────────────────────────────────────────────────────────────────────
+
+enum NotificationChannel {
+  PUSH
+  ZALO_ZNS
+  ZALO_OA_MSG
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
+
+model Notification {
+  id          String              @id @default(uuid()) @db.Uuid
+  userId      String              @db.Uuid
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel     NotificationChannel
+  template    String
+  payload     Json
+  status      NotificationStatus  @default(QUEUED)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  failedAt    DateTime?
+  failureCode String?
+  readAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model NotificationPreference {
+  userId               String  @id @db.Uuid
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookingReminders     Boolean @default(true)
+  ladderUpdates        Boolean @default(true)
+  tournamentNews       Boolean @default(true)
+  marketing            Boolean @default(false)
+  preferredChannel     NotificationChannel @default(ZALO_OA_MSG)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Zalo OA conversations (chatbot booking)
+// ──────────────────────────────────────────────────────────────────────────
+
+model ZaloOaConversation {
+  id            String   @id @default(uuid()) @db.Uuid
+  zaloUserId    String   @unique
+  userId        String?  @unique @db.Uuid
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  intentState   Json?    // serialized state machine
+  lastMessageAt DateTime?
+  createdAt     DateTime @default(now())
+
+  messages      ZaloOaMessage[]
+
+  @@index([lastMessageAt])
+}
+
+enum ZaloOaDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model ZaloOaMessage {
+  id              String              @id @default(uuid()) @db.Uuid
+  conversationId  String              @db.Uuid
+  conversation    ZaloOaConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction       ZaloOaDirection
+  messageType     String              // text, template, attachment...
+  payload         Json
+  zaloMsgId       String?
+  sentAt          DateTime            @default(now())
+
+  @@index([conversationId, sentAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Outbox (transactional events for the worker)
+// ──────────────────────────────────────────────────────────────────────────
+
+enum OutboxStatus {
+  PENDING
+  DISPATCHED
+  FAILED
+}
+
+model OutboxEvent {
+  id          String       @id @default(uuid()) @db.Uuid
+  topic       String
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  dispatchedAt DateTime?
+  failedAt    DateTime?
+  failureCode String?
+  createdAt   DateTime     @default(now())
+
+  @@index([status, createdAt])
+  @@index([topic, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorId     String?  @db.Uuid
+  actorRole   String?
+  action      String
+  entity      String
+  entityId    String?
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}

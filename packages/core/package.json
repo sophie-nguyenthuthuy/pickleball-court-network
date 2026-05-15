@@ -1,0 +1,39 @@
+{
+  "name": "@pcn/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./booking": "./src/booking/index.ts",
+    "./pricing": "./src/pricing/index.ts",
+    "./rating": "./src/rating/index.ts",
+    "./ladder": "./src/ladder/index.ts",
+    "./tournament": "./src/tournament/index.ts",
+    "./time": "./src/time/index.ts",
+    "./id": "./src/id.ts",
+    "./errors": "./src/errors.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@pcn/db": "workspace:*",
+    "date-fns": "^3.6.0",
+    "date-fns-tz": "^3.1.3",
+    "zod": "^3.23.8",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.3",
+    "vitest": "^1.6.0"
+  }
+}

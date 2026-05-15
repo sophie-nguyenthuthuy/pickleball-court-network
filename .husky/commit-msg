@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# enforce Conventional Commits
+commit_regex='^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert)(\(.+\))?!?: .{1,}$'
+if ! grep -qE "$commit_regex" "$1"; then
+  echo "✗ Commit message must follow Conventional Commits (e.g. 'feat(api): add zalo login')"
+  exit 1
+fi

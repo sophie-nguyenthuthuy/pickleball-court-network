@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "PCN",
+    "slug": "pcn-mobile",
+    "scheme": "pcn",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "vn.pcn.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "vn.pcn.mobile"
+    },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": { "typedRoutes": true }
+  }
+}

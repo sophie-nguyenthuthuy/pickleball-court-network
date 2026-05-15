@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pcn
+description: Pickleball Court Network — booking + ladder + tournaments
+version: 0.1.0
+appVersion: "0.1.0"
+type: application
