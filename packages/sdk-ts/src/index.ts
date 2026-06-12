@@ -16,7 +16,13 @@ export class PcnClient {
 
   constructor(opts: PcnClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // The browser `fetch` throws "Illegal invocation" when called with a `this`
+    // other than the global object, so we must NOT store it as a bound method.
+    // Wrap a custom impl too, so all call sites go through a plain function.
+    const impl = opts.fetchImpl;
+    this.fetchImpl = impl
+      ? (...args: Parameters<typeof fetch>) => impl(...args)
+      : (...args: Parameters<typeof fetch>) => fetch(...args);
     this.headers = {
       'content-type': 'application/json',
       accept: 'application/json',

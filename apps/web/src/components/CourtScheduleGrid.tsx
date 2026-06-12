@@ -16,6 +16,9 @@ export const CourtScheduleGrid = ({ courtId, date }: Props) => {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['slots', courtId, date],
     queryFn: () => apiBrowser().listSlots(courtId, date),
+    // Always fetch even if the browser's online heuristic misfires (some
+    // embedded/automated webviews report offline and would pause the query).
+    networkMode: 'always',
   });
 
   if (isLoading) return <p className="text-sm text-slate-500">Đang tải...</p>;

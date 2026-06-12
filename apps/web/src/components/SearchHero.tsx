@@ -22,7 +22,7 @@ export const SearchHero = () => {
           onSubmit={(e) => {
             e.preventDefault();
             const params = new URLSearchParams({ city, ...(district ? { district } : {}) });
-            router.push(`/sân?${params.toString()}`);
+            router.push(`/san?${params.toString()}`);
           }}
         >
           <select

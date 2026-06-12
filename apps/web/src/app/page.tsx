@@ -18,7 +18,7 @@ export default async function HomePage() {
             <h2 className="text-2xl font-semibold">Sân nổi bật</h2>
             <p className="text-slate-600">Đặt nhanh — khung giờ thật, giá thật.</p>
           </div>
-          <Link href="/sân" className="text-sm text-brand-700 hover:underline">
+          <Link href="/san" className="text-sm text-brand-700 hover:underline">
             Xem tất cả →
           </Link>
         </header>
